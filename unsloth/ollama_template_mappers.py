@@ -612,60 +612,66 @@ tokenizer.apply_chat_template(
 )
 """
 
-# Ollama from https://ollama.com/library/llama3.1 (needs updating!)
+# Ollama from https://ollama.com/library/llama3.1
 llama31_ollama = '''
 FROM {__FILE_LOCATION__}
-TEMPLATE """{{ if .Messages }}
-{{- if or .System .Tools }}<|start_header_id|>system<|end_header_id|>
-{{- if .System }}
+TEMPLATE """{{- if or .System .Tools }} ▶system◀
 
-{{ .System }}
+Cutting Knowledge Date: December 2023
+
+{{- if .System }}{{ .System }}
 {{- end }}
 {{- if .Tools }}
 
-You are a helpful assistant with tool calling capabilities. When you receive a tool call response, use the output to format an answer to the original use question.
-{{- end }}
+When you receive a tool call response, use the output to format an answer to the orginal user question.
+
+You are a helpful assistant with tool calling capabilities.
 {{- end }}<|eot_id|>
+{{- end }}
 {{- range $i, $_ := .Messages }}
 {{- $last := eq (len (slice $.Messages $i)) 1 }}
-{{- if eq .Role "user" }}<|start_header_id|>user<|end_header_id|>
+{{- if eq .Role "user" }} ▶user◀
 {{- if and $.Tools $last }}
 
 Given the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.
 
 Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}. Do not use variables.
 
-{{ $.Tools }}
-{{- end }}
+{{ range $.Tools }}
+{{- . }}
+{{ end }}
+{{ .Content }}<|eot_id|>
+{{- else }}
 
-{{ .Content }}<|eot_id|>{{ if $last }}<|start_header_id|>assistant<|end_header_id|>
+{{ .Content }}<|eot_id|>
+{{- end }}{{ if $last }} ▶assistant◀
 
 {{ end }}
-{{- else if eq .Role "assistant" }}<|start_header_id|>assistant<|end_header_id|>
+{{- else if eq .Role "assistant" }} ▶assistant◀
 {{- if .ToolCalls }}
-
-{{- range .ToolCalls }}{"name": "{{ .Function.Name }}", "parameters": {{ .Function.Arguments }}}{{ end }}
+{{ range .ToolCalls }}
+{"name": "{{ .Function.Name }}", "parameters": {{ .Function.Arguments }}}{{ end }}
 {{- else }}
 
-{{ .Content }}{{ if not $last }}<|eot_id|>{{ end }}
-{{- end }}
-{{- else if eq .Role "tool" }}<|start_header_id|>ipython<|end_header_id|>
+{{ .Content }}
+{{- end }}{{ if not $last }}<|eot_id|>{{ end }}
+{{- else if eq .Role "tool" }} ▶ipython◀
 
-{{ .Content }}<|eot_id|>{{ if $last }}<|start_header_id|>assistant<|end_header_id|>
+{{ .Content }}<|eot_id|>{{ if $last }} ▶assistant◀
 
 {{ end }}
 {{- end }}
 {{- end }}
-{{- else }}
-{{- if .System }}<|start_header_id|>system<|end_header_id|>
+{{- if not .Messages }}
+{{- if .System }} ▶system◀
 
-{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
+{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }} ▶user◀
 
-{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
+{{ .Prompt }}<|eot_id|>{{ end }} ▶assistant◀
 
-{{ end }}{{ .Response }}{{ if .Response }}<|eot_id|>{{ end }}"""
-PARAMETER stop "<|start_header_id|>"
-PARAMETER stop "<|end_header_id|>"
+{{ .Response }}<|eot_id|>{{ end }}"""
+PARAMETER stop "▶"
+PARAMETER stop "◀"
 PARAMETER stop "<|eot_id|>"
 PARAMETER stop "<|eom_id|>"
 PARAMETER temperature 1.5
@@ -791,6 +797,8 @@ OLLAMA_TEMPLATES["llama-31-nemotron"] = llama_31_nemotron_ollama
 OLLAMA_TEMPLATES["llama-31-storm"] = llama_31_storm_ollama
 OLLAMA_TEMPLATES["llama-32-vision"] = llama_32_vision_ollama
 
+# Llama 3.2 / 3.3 use the same template as 3.1 (same header format,
+# same special tokens, same tool-calling structure).
 for version in ("llama-3.2", "llama-3.3", "llama-32", "llama-33"):
     OLLAMA_TEMPLATES[version] = OLLAMA_TEMPLATES["llama-3.1"]
 
@@ -811,6 +819,18 @@ SYSTEM """You are a helpful AI assistant."""
 '''
 
 OLLAMA_TEMPLATES["tinyllama"] = tinyllama_ollama
+
+# =========================================== Nomic Embed Text
+# Ollama from https://ollama.com/library/nomic-embed-text
+# Simple pass-through template for embedding models (no chat structure).
+nomic_embed_text_ollama = '''
+FROM {__FILE_LOCATION__}
+TEMPLATE """{{ .Prompt }}"""
+PARAMETER num_ctx 8192
+'''
+
+OLLAMA_TEMPLATES["nomic-embed-text"] = nomic_embed_text_ollama
+OLLAMA_TEMPLATES["nomic_embed_text"] = nomic_embed_text_ollama
 
 
 # =========================================== Qwen 2/2.5
@@ -1462,6 +1482,9 @@ For each function call, return a json object with function name and arguments wi
 
 OLLAMA_TEMPLATES["qwen3-instruct"] = qwen3_ollama
 OLLAMA_TEMPLATES["qwen3-thinking"] = qwen3_ollama
+
+# Custom / local Qwen2-based models discovered on this host
+OLLAMA_TEMPLATES["db2-qwen7b-v12"] = OLLAMA_TEMPLATES["qwen-2"]
 
 
 # =========================================== Starling-LM
