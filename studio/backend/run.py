@@ -819,6 +819,7 @@ def run_server(
     api_only: bool = False,
     llama_parallel_slots: int = 1,
     cloudflare: bool = True,
+    llama_server_port: Optional[int] = None,
 ):
     """
     Start the FastAPI server.
@@ -830,12 +831,16 @@ def run_server(
         silent: Suppress startup messages
         api_only: API server only, no frontend (for Tauri desktop app)
         llama_parallel_slots: parallel slots for llama-server
+        llama_server_port: pin the llama-server inference port (None = auto-assign)
 
     Note:
         Signal handlers are NOT registered here so embedders (e.g. Colab) keep
         their own interrupt semantics; standalone callers register them after.
     """
     global _server, _shutdown_event
+
+    if llama_server_port is not None:
+        os.environ["UNSLOTH_LLAMA_SERVER_PORT"] = str(llama_server_port)
 
     # Windows cp1252 can't encode emoji; reconfigure stdout to UTF-8.
     if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
@@ -1102,6 +1107,12 @@ if __name__ == "__main__":
             f"Default {_PARALLEL_DEFAULT_PLAIN}; `unsloth studio run` uses 4."
         ),
     )
+    parser.add_argument(
+        "--llama-server-port",
+        type = int,
+        default = None,
+        help = "Pin the llama-server inference port instead of auto-assigning a free port.",
+    )
 
     args = parser.parse_args()
     if not _PARALLEL_MIN <= args.parallel <= _PARALLEL_MAX:
@@ -1114,6 +1125,7 @@ if __name__ == "__main__":
         api_only = args.api_only,
         llama_parallel_slots = args.parallel,
         cloudflare = args.cloudflare,
+        llama_server_port = args.llama_server_port,
     )
     if args.frontend is not None:
         kwargs["frontend_path"] = Path(args.frontend)

@@ -2138,7 +2138,20 @@ class LlamaCppBackend:
 
     @staticmethod
     def _find_free_port() -> int:
-        """Find an available TCP port."""
+        """Find an available TCP port.
+
+        Checks ``UNSLOTH_LLAMA_SERVER_PORT`` first; if set to a valid
+        port number, uses it directly. Otherwise binds to port 0 to let
+        the OS assign a free port.
+        """
+        env_port = os.environ.get("UNSLOTH_LLAMA_SERVER_PORT", "").strip()
+        if env_port:
+            try:
+                port = int(env_port)
+                if 1 <= port <= 65535:
+                    return port
+            except ValueError:
+                pass
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]

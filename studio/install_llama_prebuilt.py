@@ -5051,6 +5051,20 @@ def download_validation_model(path: Path, cache_path: Path | None = None) -> Non
 
 
 def free_local_port() -> int:
+    """Return a free local TCP port.
+
+    Checks ``UNSLOTH_LLAMA_SERVER_PORT`` first; if set to a valid
+    port number, uses it directly. Otherwise binds to port 0 to let
+    the OS assign a free port.
+    """
+    env_port = os.environ.get("UNSLOTH_LLAMA_SERVER_PORT", "").strip()
+    if env_port:
+        try:
+            port = int(env_port)
+            if 1 <= port <= 65535:
+                return port
+        except ValueError:
+            pass
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     _, port = sock.getsockname()

@@ -661,10 +661,19 @@ def studio_default(
         "--cloudflare/--no-cloudflare",
         help = "Auto-create a free Cloudflare HTTPS tunnel when bound to 0.0.0.0 (default on).",
     ),
+    llama_server_port: Optional[int] = typer.Option(
+        None,
+        "--llama-server-port",
+        min = 1,
+        max = 65535,
+        help = "Pin the llama-server inference port instead of auto-assigning a free port.",
+    ),
 ):
     """Launch the Unsloth Studio server."""
     # Runs before every subcommand (run/setup/update/...).
     _ensure_studio_env_exported()
+    if llama_server_port is not None:
+        os.environ["UNSLOTH_LLAMA_SERVER_PORT"] = str(llama_server_port)
     if ctx.invoked_subcommand is not None:
         # Typer doesn't forward parent options to subcommands, so
         # `unsloth studio --parallel N run ...` would silently drop N.
@@ -952,6 +961,13 @@ def run(
             "decode speed, MoE usually don't."
         ),
     ),
+    llama_server_port: Optional[int] = typer.Option(
+        None,
+        "--llama-server-port",
+        min = 1,
+        max = 65535,
+        help = "Pin the llama-server inference port instead of auto-assigning a free port.",
+    ),
 ):
     """Start Studio, load a model, print an API key -- one-liner server.
 
@@ -1026,6 +1042,9 @@ def run(
     studio_venv_dir = STUDIO_HOME / "unsloth_studio"
     in_studio_venv = sys.prefix.startswith(str(studio_venv_dir))
 
+    if llama_server_port is not None:
+        os.environ["UNSLOTH_LLAMA_SERVER_PORT"] = str(llama_server_port)
+
     if not in_studio_venv:
         studio_python = _studio_venv_python()
         if not studio_python:
@@ -1075,6 +1094,8 @@ def run(
         # Forward the explicit polarity (same rationale as --load-in-4bit above).
         args.append("--cloudflare" if cloudflare else "--no-cloudflare")
         args.append("--tensor-parallel" if tensor_parallel else "--no-tensor-parallel")
+        if llama_server_port is not None:
+            args.extend(["--llama-server-port", str(llama_server_port)])
         # llama-server pass-through extras → child ctx.args → load payload.
         if extra_llama_args:
             args.extend(extra_llama_args)
@@ -1099,6 +1120,7 @@ def run(
         silent = True,
         llama_parallel_slots = parallel,
         cloudflare = cloudflare,
+        llama_server_port = llama_server_port,
     )
     if frontend is not None:
         run_kwargs["frontend_path"] = frontend
