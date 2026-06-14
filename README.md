@@ -248,6 +248,21 @@ $env:UNSLOTH_STUDIO_HOME='C:\path'; irm https://unsloth.ai/install.ps1 | iex
 
 Cap Studio's native CPU thread pools on high-core hosts: `UNSLOTH_CPU_THREADS=8 unsloth studio -p 8888`.
 
+#### Pinning the llama-server inference port
+By default, Unsloth assigns a random free port to the internal `llama-server` process that handles GGUF inference. To pin it to a fixed port (useful for reverse proxies, firewall rules, or service discovery), use either the CLI flag or environment variable:
+
+```bash
+# Via CLI flag
+unsloth studio --llama-server-port 51465
+unsloth studio run --model unsloth/Qwen3-1.7B-GGUF --llama-server-port 51465
+
+# Via environment variable
+export UNSLOTH_LLAMA_SERVER_PORT=51465
+unsloth studio
+```
+
+The value must be an integer between 1 and 65535. If the port is unavailable when the server starts, the process will fail fast instead of silently migrating to another port.
+
 #### Uninstall
 The recommended way to fully remove Unsloth Studio is the matching uninstall script for your OS. It stops any running servers, removes the install dir, the launcher data dir, the desktop shortcut, and any platform-specific entries (macOS `.app` bundle + Launch Services on Mac; Start Menu, `HKCU\Software\Unsloth` registry key and user `PATH` entries on Windows):
 
