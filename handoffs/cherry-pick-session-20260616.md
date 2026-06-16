@@ -84,6 +84,38 @@ python3 -m pytest tests/studio/test_llama_cpp_wall_clock_cap.py tests/studio/tes
 
 ---
 
+---
+
+## Branch consolidation: merge three branches into `feature/pin-llama-server-port`
+
+**Action:** Merged the three open cherry-pick/documentation branches into the integration base.
+
+1. `cherry-pick/unsloth-5894-6357-6342-studio-cli-gguf` → fast-forward.
+2. `cherry-pick/unsloth-6351-cve-rng-state` → resolved handoff-file conflict.
+3. `docs/cherry-pick-policy` → resolved conflicts in:
+   - `CHERRY-PICK-POLICY.md` (kept private-fork wording).
+   - `studio/backend/run.py` (combined port-pinning + upstream `--secure` flag).
+   - `unsloth_cli/commands/studio.py` (combined port-pinning + upstream `--secure` flag).
+
+**Side effect:** `docs/cherry-pick-policy` was based on a newer `origin/main`, so the merge also pulled in upstream changes including the `--secure` Cloudflare tunnel feature and related tool-policy work.
+
+**Validation commands run after merges:**
+```bash
+python3 -m py_compile studio/backend/run.py unsloth_cli/commands/studio.py studio/backend/core/inference/llama_cpp.py unsloth/import_fixes.py unsloth/_gpu_init.py studio/backend/core/training/trainer.py
+python3 -m pytest unsloth_cli/tests/test_studio_cloudflare_flag.py unsloth_cli/tests/test_studio_secure_flag.py -v
+python3 -m pytest studio/backend/tests/test_secure_tunnel_gate.py -v
+python3 -m pytest tests/studio/test_cli_repo_variant.py studio/backend/tests/test_cached_gguf_routes.py studio/backend/tests/test_offline_gguf_cache_fallback.py -v
+```
+
+**Validation results:**
+- Syntax check: passed.
+- Cloudflare + secure flag tests: 24 passed.
+- Secure tunnel gate tests: 15 passed.
+- Repo-variant / GGUF cache tests: 105 passed, 2 failed (Hugging Face 404 on `org/repo`; network/test-data issue, not a merge regression).
+- Signature inspection: `run_server`, `studio_default`, and `run` all expose both `llama_server_port` and `secure` parameters.
+
+**Decision:** Keep. `feature/pin-llama-server-port` now contains the port-pinning feature, the four cherry-picked upstream fixes, the cherry-pick policy docs, and the upstream `--secure` tunnel feature.
+
 ## Follow-ups / blockers
 
 1. **Environment:** Install `unsloth_zoo` and re-run the full test slice for `unsloth/_gpu_init.py` and `unsloth/import_fixes.py` to confirm no regressions from the CVE fix.
