@@ -2375,6 +2375,70 @@ class LlamaCppBackend:
             s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]
 
+    @staticmethod
+    def _apply_max_context_env_cap(n_ctx: int) -> int:
+        """Cap ``n_ctx`` by ``UNSLOTH_LLAMA_SERVER_MAX_CONTEXT`` if set.
+
+        A value of ``0`` means "use the model's native context", so an env
+        cap also replaces ``0`` with the capped value. Invalid env values are
+        logged and ignored.
+        """
+        env_value = os.environ.get("UNSLOTH_LLAMA_SERVER_MAX_CONTEXT")
+        if not env_value:
+            return n_ctx
+        try:
+            max_ctx = int(env_value)
+            if max_ctx > 0 and (n_ctx == 0 or n_ctx > max_ctx):
+                logger.info(
+                    f"Capping n_ctx {n_ctx} -> {max_ctx} "
+                    "(UNSLOTH_LLAMA_SERVER_MAX_CONTEXT)"
+                )
+                return max_ctx
+        except ValueError:
+            logger.warning(
+                "Invalid UNSLOTH_LLAMA_SERVER_MAX_CONTEXT value: %r", env_value
+            )
+        return n_ctx
+
+    @staticmethod
+    def _apply_extra_args_env_injection(
+        extra_args: Optional[List[str]],
+    ) -> Optional[List[str]]:
+        """Append ``UNSLOTH_LLAMA_SERVER_EXTRA_ARGS`` tokens to *extra_args*.
+
+        Space-separated tokens in the env var; appended after Studio's flags
+        so llama.cpp's last-wins parser lets the user override anything the
+        route set. Lets a user disable speculative decoding, force a cache
+        type, or pin a non-default flag without UI plumbing.
+
+        Returns a new list (Studio's *extra_args* is treated as immutable by
+        callers that pass None to mean "inherit previous load's extras").
+        """
+        env_value = os.environ.get("UNSLOTH_LLAMA_SERVER_EXTRA_ARGS", "").strip()
+        if not env_value:
+            return extra_args
+        injected = env_value.split()
+        try:
+            from core.inference.llama_server_args import validate_extra_args
+            validated = validate_extra_args(injected)
+        except ValueError as exc:
+            logger.warning(
+                "UNSLOTH_LLAMA_SERVER_EXTRA_ARGS contains a managed flag and "
+                "will be ignored: %s",
+                exc,
+            )
+            return extra_args
+        merged: Optional[List[str]] = (
+            list(extra_args) + validated if extra_args else list(validated)
+        )
+        logger.info(
+            "Injected %d llama-server arg(s) from "
+            "UNSLOTH_LLAMA_SERVER_EXTRA_ARGS: %s",
+            len(validated),
+            validated,
+        )
+        return merged
+
     # ── Stdout drain (prevents pipe deadlock on Windows) ─────────
 
     def _drain_stdout(self):
@@ -3626,6 +3690,18 @@ class LlamaCppBackend:
 
         Returns True if the server started and the health check passed.
         """
+        # Optional hard cap for the context window. On hosts where
+        # llama-server's --fit reduces the native context to an unusable
+        # minimum (e.g. Apple Silicon with no GPU free-memory probe), this
+        # gives the user a persistent way to request a sane context without
+        # relying on the per-load UI slider.
+        n_ctx = self._apply_max_context_env_cap(n_ctx)
+        # Persistent escape hatch for llama-server flags the UI does not
+        # expose (e.g. --spec-type off when the MTP drafter is unusable on
+        # Apple Silicon). Appended last so llama.cpp's last-wins parser
+        # honors it.
+        extra_args = self._apply_extra_args_env_injection(extra_args)
+
         # Serialise the whole load so concurrent /load calls never leave two
         # llama-server processes alive (#5401 / #5161). Doesn't block /unload.
         with self._serial_load_lock:

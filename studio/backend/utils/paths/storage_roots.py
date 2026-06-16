@@ -279,6 +279,14 @@ def _setup_cache_env() -> None:
     root = cache_root()
     xdg_cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")).expanduser()
     hf_default = xdg_cache / "huggingface"
+
+    # If the user has already set HF_HOME, derive the HF_HUB_CACHE and
+    # HF_XET_CACHE from it instead of silently falling back to
+    # ~/.cache/huggingface. This prevents downloads from being split between
+    # the configured HF_HOME and the default cache path.
+    if "HF_HOME" in os.environ:
+        hf_default = Path(os.environ["HF_HOME"]).expanduser()
+
     defaults: dict[str, str] = {
         "HF_HOME": str(hf_default),
         "HF_HUB_CACHE": str(hf_default / "hub"),

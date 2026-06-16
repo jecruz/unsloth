@@ -263,6 +263,61 @@ unsloth studio
 
 The value must be an integer between 1 and 65535. If the port is unavailable when the server starts, the process will fail fast instead of silently migrating to another port.
 
+#### Local install (this checkout)
+
+If you cloned this repo to a known path (for example `/Users/jeffreycruz/Development/LLM_INFERENCE/unsloth`) and want to install from the working tree instead of pulling from PyPI, use the bundled installer's `--local` mode. The script resolves the repo root from `$0` (`install.sh:1760`), so it must be run from inside the clone.
+
+```bash
+cd /path/to/unsloth
+./install.sh --local
+```
+
+What `--local` actually does, in order (traced through `install.sh`):
+
+1. Creates a venv at `UNSLOTH_STUDIO_HOME` → `STUDIO_HOME` → `~/.unsloth/studio` (default).
+2. Detects the GPU (NVIDIA / AMD Radeon / AMD ROCm / Intel Mac / CPU) and pins the matching PyTorch index and constraint.
+3. Installs the released `unsloth>=2026.6.7` + `unsloth-zoo` from PyPI (`install.sh:2721`).
+4. Overlays this checkout editable: `uv pip install -e "$_REPO_ROOT" --no-deps` (`install.sh:2728`).
+5. Re-pins `unsloth-zoo` from `git+https://github.com/unslothai/unsloth-zoo` (`install.sh:2731`). A stale PyPI release can shadow your local edits until step 4 runs.
+6. Runs `studio/setup.sh` with `STUDIO_LOCAL_INSTALL=1 STUDIO_LOCAL_REPO=$_REPO_ROOT` (`install.sh:2823`), which rebuilds the Studio frontend and node modules against the checkout.
+
+To update after a `git pull`, re-run `./install.sh --local` from the same directory.
+
+Launch afterwards (the CLI is installed under `~/.unsloth/studio/bin/`):
+
+```bash
+unsloth studio -p 8888
+```
+
+#### Core only (no Studio UI)
+
+If you only want the Python `unsloth` package editable without standing up the Studio web UI, mirror the installer's Python side and skip step 6:
+
+```bash
+cd /path/to/unsloth
+uv venv .venv --python 3.13
+source .venv/bin/activate
+uv pip install unsloth-zoo "unsloth>=2026.6.7" --torch-backend=auto
+uv pip install -e . --no-deps
+uv pip install --no-deps "unsloth-zoo @ git+https://github.com/unslothai/unsloth-zoo"
+```
+
+#### PyTorch install logs (what you will actually see)
+
+The installer's user-facing log lines around PyTorch come from `install.sh`. The phrase "downloads a CPU+Metal PyTorch build" never appears in any log or stdout. Metal support on Apple Silicon is bundled in the standard `torch` arm64 wheel and is not announced by the installer. The lines that actually appear are:
+
+| Host | Log line | Source |
+|---|---|---|
+| Any host with no GPU (non-macOS) | `No GPU detected -- installing CPU-only PyTorch.` | `install.sh:2432` |
+| Apple Silicon / Intel Mac | (no extra line; silently routes to `https://download.pytorch.org/whl/cpu`) | `install.sh:1878` |
+| `--no-torch` or Intel Mac x86_64 | `skipping PyTorch (--no-torch or Intel Mac x86_64).` | `install.sh:2533` |
+| Non-skip path | `installing PyTorch ($TORCH_INDEX_URL)...` followed by `install PyTorch` (uv pip label) | `install.sh:2682-2683` |
+| Final `unsloth` overlay | `install unsloth (auto torch backend)` (uv pip label) | `install.sh:2763` |
+
+Below those, you get normal `uv pip` output: `Resolved N packages`, `Downloading torch...`, `Installed torch-2.x.x...`, etc. On Apple Silicon with Python 3.13+, the `torch` constraint is tightened to `>=2.6,<2.11.0` because `torch<2.6` does not publish macOS arm64 cp313 wheels (`install.sh:1747`).
+
+Note: editing this section in a fork means `git pull` from `unslothai/unsloth` will surface a merge conflict in `README.md` whenever upstream updates the file.
+
 #### Uninstall
 The recommended way to fully remove Unsloth Studio is the matching uninstall script for your OS. It stops any running servers, removes the install dir, the launcher data dir, the desktop shortcut, and any platform-specific entries (macOS `.app` bundle + Launch Services on Mac; Start Menu, `HKCU\Software\Unsloth` registry key and user `PATH` entries on Windows):
 
