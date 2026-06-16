@@ -248,8 +248,8 @@ def _should_suppress_forced_no_tool_output(text: str) -> bool:
 
 
 # ── Pre-compiled patterns for GGUF shard detection ───────────
-_SHARD_FULL_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
-_SHARD_RE = re.compile(r"^(.*)-\d{5}-of-\d{5}\.gguf$", re.IGNORECASE)
+_SHARD_FULL_RE = re.compile(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$")
+_SHARD_RE = re.compile(r"^(.*)-\d{5}-of-\d{5}\.gguf$")
 
 
 # ── Sliding-window-pattern resolver ───────────────────────────
@@ -625,99 +625,6 @@ def _is_companion_gguf_path(path: str) -> bool:
         return True
     name = p.rsplit("/", 1)[-1]
     return name.startswith("mtp-") or "/mtp/" in f"/{p}"
-
-
-_BIG_ENDIAN_GGUF_FILENAME_RE = re.compile(r"(^|[-_])be(?:[._-]|$)", re.IGNORECASE)
-_GGUF_KNOWN_QUANT_RE = re.compile(
-    r"(UD-)?"
-    r"(MXFP[0-9]+(?:_[A-Z0-9]+)*"
-    r"|IQ[0-9]+_[A-Z]+(?:_[A-Z0-9]+)?"
-    r"|TQ[0-9]+_[0-9]+"
-    r"|Q[0-9]+_K_[A-Z]+"
-    r"|Q[0-9]+_[0-9]+"
-    r"|Q[0-9]+_K"
-    r"|BF16|F16|F32)",
-    re.IGNORECASE,
-)
-
-
-def _is_big_endian_gguf_path(path: str, variant_key: str = "") -> bool:
-    normalized = path.replace("\\", "/")
-    name = normalized.rsplit("/", 1)[-1]
-    stem = name.rsplit(".", 1)[0].lower()
-    variant_key = variant_key.strip().lower()
-    variant_index = stem.find(variant_key) if variant_key else -1
-    parent = normalized.rsplit("/", 1)[0].lower() if "/" in normalized else ""
-    variant_in_parent_only = (
-        bool(parent)
-        and variant_index < 0
-        and (
-            (variant_key and variant_key in parent)
-            or (not variant_key and _GGUF_KNOWN_QUANT_RE.search(parent) is not None)
-        )
-    )
-    for match in _BIG_ENDIAN_GGUF_FILENAME_RE.finditer(stem):
-        if variant_index >= 0 and variant_index < match.start():
-            return True
-        tail = stem[match.end() :].lstrip("._-")
-        if not tail or _GGUF_KNOWN_QUANT_RE.search(tail) is None:
-            return not variant_in_parent_only
-    return False
-
-
-def _gguf_snapshot_files(snapshot: Path) -> list[str]:
-    return [
-        p.relative_to(snapshot).as_posix()
-        for p in snapshot.rglob("*")
-        if p.is_file() and p.name.lower().endswith(".gguf")
-    ]
-
-
-def _gguf_extra_shards(files: Iterable[str], first_shard: str) -> list[str]:
-    m = _SHARD_FULL_RE.match(first_shard)
-    if not m:
-        return []
-    prefix = m.group(1)
-    total = m.group(3)
-    sibling_pat = re.compile(
-        r"^" + re.escape(prefix) + r"-\d{5}-of-" + re.escape(total) + r"\.gguf$",
-        re.IGNORECASE,
-    )
-    return sorted(f for f in files if f != first_shard and sibling_pat.match(f))
-
-
-def _gguf_files_for_variant(files: Iterable[str], variant: str) -> list[str]:
-    """Return main GGUF files matching a requested variant.
-
-    Prefer exact quant-label matches over loose substring matches so a request
-    for ``stories260K`` does not resolve to ``stories260K-be.gguf``.
-    """
-    variant_key = variant.strip().lower()
-    main_files = [
-        f
-        for f in files
-        if f.lower().endswith(".gguf")
-        and not _is_companion_gguf_path(f)
-        and not _is_big_endian_gguf_path(f, variant_key)
-    ]
-    if not variant_key:
-        return sorted(main_files)
-
-    try:
-        from utils.models.model_config import _extract_quant_label
-    except Exception:
-        _extract_quant_label = None
-
-    if _extract_quant_label is not None:
-        try:
-            exact = sorted(f for f in main_files if _extract_quant_label(f).lower() == variant_key)
-            if exact:
-                return exact
-        except Exception as e:
-            logger.warning("Failed to extract GGUF quant labels: %s", e)
-
-    boundary = re.compile(r"(?<![a-zA-Z0-9])" + re.escape(variant_key) + r"(?![a-zA-Z0-9])")
-    return sorted(f for f in main_files if boundary.search(f.lower()))
 
 
 # Below this many B params, draft-mtp regresses vs spec-off (bench in
@@ -1140,13 +1047,12 @@ class LlamaCppBackend:
                 m = _SHARD_RE.match(stem)
                 prefix = m.group(1) if m else None
                 if prefix and parent.is_dir():
-                    prefix_lower = prefix.lower()
                     for sibling in parent.iterdir():
                         if (
                             sibling.is_file()
-                            and sibling.name.lower().startswith(prefix_lower)
+                            and sibling.name.startswith(prefix)
                             and sibling.name != stem
-                            and sibling.suffix.lower() == ".gguf"
+                            and sibling.suffix == ".gguf"
                         ):
                             try:
                                 bytes_total += sibling.stat().st_size
@@ -1595,8 +1501,7 @@ class LlamaCppBackend:
         if m:
             prefix, _, num_total = m.group(1), m.group(2), m.group(3)
             sibling_pat = re.compile(
-                r"^" + re.escape(prefix) + r"-\d{5}-of-" + re.escape(num_total) + r"\.gguf$",
-                re.IGNORECASE,
+                r"^" + re.escape(prefix) + r"-\d{5}-of-" + re.escape(num_total) + r"\.gguf$"
             )
             for sibling in main.parent.iterdir():
                 if sibling != main and sibling_pat.match(sibling.name):
@@ -2415,11 +2320,7 @@ class LlamaCppBackend:
 
             files = list_repo_files(hf_repo, token = hf_token)
             gguf_files = [
-                f
-                for f in files
-                if f.lower().endswith(".gguf")
-                and not _is_companion_gguf_path(f)
-                and not _is_big_endian_gguf_path(f)
+                f for f in files if f.endswith(".gguf") and not _is_companion_gguf_path(f)
             ]
             if not gguf_files:
                 return None
@@ -3025,10 +2926,27 @@ class LlamaCppBackend:
                 from huggingface_hub import list_repo_files
 
                 files = list_repo_files(hf_repo, token = hf_token)
-                gguf_files = _gguf_files_for_variant(files, hf_variant)
+                variant_lower = hf_variant.lower()
+                boundary = re.compile(
+                    r"(?<![a-zA-Z0-9])" + re.escape(variant_lower) + r"(?![a-zA-Z0-9])"
+                )
+                gguf_files = sorted(
+                    f
+                    for f in files
+                    if f.endswith(".gguf")
+                    and boundary.search(f.lower())
+                    and not _is_companion_gguf_path(f)
+                )
                 if gguf_files:
                     gguf_filename = gguf_files[0]
-                    gguf_extra_shards = _gguf_extra_shards(gguf_files, gguf_filename)
+                    m = _SHARD_FULL_RE.match(gguf_filename)
+                    if m:
+                        prefix = m.group(1)
+                        total = m.group(3)
+                        sibling_pat = re.compile(
+                            r"^" + re.escape(prefix) + r"-\d{5}-of-" + re.escape(total) + r"\.gguf$"
+                        )
+                        gguf_extra_shards = [f for f in gguf_files[1:] if sibling_pat.match(f)]
             except Exception as e:
                 logger.warning(f"Could not list repo files: {e}")
 
@@ -3040,13 +2958,33 @@ class LlamaCppBackend:
             if not gguf_filename:
                 try:
                     from utils.models.model_config import _iter_hf_cache_snapshots
+                    boundary = re.compile(
+                        r"(?<![a-zA-Z0-9])" + re.escape(hf_variant.lower()) + r"(?![a-zA-Z0-9])"
+                    )
                     for snap in _iter_hf_cache_snapshots(hf_repo):
-                        cached_files = _gguf_snapshot_files(snap)
-                        matches = _gguf_files_for_variant(cached_files, hf_variant)
+                        matches = sorted(
+                            p.relative_to(snap).as_posix()
+                            for p in snap.rglob("*.gguf")
+                            if not _is_companion_gguf_path(p.relative_to(snap).as_posix())
+                            and boundary.search(p.relative_to(snap).as_posix().lower())
+                        )
                         if not matches:
                             continue
                         gguf_filename = matches[0]
-                        gguf_extra_shards = _gguf_extra_shards(matches, gguf_filename)
+                        m = _SHARD_FULL_RE.match(Path(gguf_filename).name)
+                        if m:
+                            prefix = m.group(1)
+                            total = m.group(3)
+                            sibling_pat = re.compile(
+                                r"^"
+                                + re.escape(prefix)
+                                + r"-\d{5}-of-"
+                                + re.escape(total)
+                                + r"\.gguf$"
+                            )
+                            gguf_extra_shards = [
+                                f for f in matches[1:] if sibling_pat.match(Path(f).name)
+                            ]
                         logger.info(
                             "Resolved variant %s -> %s from local HF cache",
                             hf_variant,
@@ -3126,11 +3064,10 @@ class LlamaCppBackend:
                         _m = _SHARD_RE.match(gguf_filename)
                         _prefix = _m.group(1) if _m else None
                         if _prefix:
-                            prefix_lower = _prefix.lower()
                             gguf_extra_shards = sorted(
                                 f
                                 for f in all_gguf_files
-                                if f.lower().startswith(prefix_lower)
+                                if f.startswith(_prefix)
                                 and f != gguf_filename
                                 and not _is_companion_gguf_path(f)
                             )
@@ -3219,7 +3156,7 @@ class LlamaCppBackend:
             try:
                 from utils.models.model_config import _iter_hf_cache_snapshots
                 for snap in _iter_hf_cache_snapshots(hf_repo):
-                    rel_files = _gguf_snapshot_files(snap)
+                    rel_files = [p.relative_to(snap).as_posix() for p in snap.rglob("*.gguf")]
                     target = pick(rel_files)
                     if target is not None:
                         logger.info("Resolved %s %s from local HF cache", label, target)
