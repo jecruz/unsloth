@@ -122,7 +122,30 @@ python3 -m pytest tests/studio/test_cli_repo_variant.py studio/backend/tests/tes
 2. **Fork main alignment:** `fork/main` and `origin/main` have unrelated histories. Merging upstream into `fork/main` is not safe without further analysis. Consider either:
    - Keeping `feature/pin-llama-server-port` as the active integration base, or
    - Manually reviewing the 3,442 commits unique to `fork/main` before any history rewrite.
-3. **Next candidates:**
-   - `58c2ec1eb` Studio: Xet-primary model downloads with HTTP fallback (high risk, 1,300+ lines, defer until later).
-   - `d50a2e2d0` Studio: remove the Windows VBS launcher to clear the Kaspersky false positive (#6326).
-   - `f3991ac41` Chat search: search all messages, user messages first (#6350).
+3. **Upstream catch-up status:** `origin/main` is currently at `58c2ec1eb` (Xet-primary HTTP fallback). The following planned candidates were already pulled into `feature/pin-llama-server-port` by the `docs/cherry-pick-policy` merge:
+   - `58c2ec1eb` Xet-primary HTTP fallback (high risk, now included).
+   - `d50a2e2d0` Windows VBS removal (#6326, now included).
+   - `f3991ac41` Chat search (#6350, now included).
+
+   Cherry-pick attempts for these commits produced empty trees, confirming they are already present. No further cherry-picks from `origin/main` are available until upstream lands new commits.
+
+4. **Broader validation run:**
+   ```bash
+   python3 -m pytest unsloth_cli/tests/test_studio_cloudflare_flag.py \
+                     unsloth_cli/tests/test_studio_secure_flag.py \
+                     tests/studio/test_cli_studio_defaults.py \
+                     tests/studio/test_cli_run_alias.py \
+                     tests/studio/test_export_output_path_contract.py -q
+   python3 -m pytest studio/backend/tests/test_secure_tunnel_gate.py \
+                     tests/studio/test_cli_repo_variant.py -q
+   python3 -m pytest studio/backend/tests/test_hf_xet_fallback.py -q
+   python3 -m pytest tests/studio/install/test_launch_studio_launcher.py -q
+   ```
+   **Results:** 34 + 36 + 17 + 5 = 92 passed, 1 skipped, 0 failed.
+
+5. **Next options:**
+   - Run a full end-to-end Studio smoke test from a proper install (outside this checkout, per the umbrella install/distribution rule).
+   - Wait for new upstream commits to land on `origin/main`, then cherry-pick them using the policy.
+   - Re-evaluate the `fork/main` unrelated-history problem and decide whether to make `feature/pin-llama-server-port` the effective default branch of the private fork.
+
+6. **Working-tree note:** `README.md` has an uncommitted local-install section that is not part of this cherry-pick work; it was preserved by stashing/popping during branch switches. Do not commit it without explicit user approval.
