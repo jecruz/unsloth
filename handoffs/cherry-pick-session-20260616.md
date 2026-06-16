@@ -148,4 +148,30 @@ python3 -m pytest tests/studio/test_cli_repo_variant.py studio/backend/tests/tes
    - Wait for new upstream commits to land on `origin/main`, then cherry-pick them using the policy.
    - Re-evaluate the `fork/main` unrelated-history problem and decide whether to make `feature/pin-llama-server-port` the effective default branch of the private fork.
 
+---
+
+## Post-merge bug fix: `--not-secure` not recognized by `run.py`
+
+**Issue:** `unsloth studio` re-execs `studio/backend/run.py` with `--not-secure` (Typer's negative flag), but `run.py` used `argparse.BooleanOptionalAction`, which generates `--no-secure` instead. This caused `run.py: error: unrecognized arguments: --not-secure` on every non-secure launch.
+
+**Root cause:** Upstream mismatch between the Typer CLI (`--secure/--not-secure`) and the backend argparse parser (`--secure` with `--no-secure` from `BooleanOptionalAction`). The merge combined both and exposed the bug.
+
+**Fix:** Add an explicit `--not-secure` argument in `studio/backend/run.py` that sets `secure=False`. Backward compatibility with `--no-secure` is preserved because `BooleanOptionalAction` still creates it.
+
+**Files changed:**
+- `studio/backend/run.py` (+9 lines)
+- `studio/backend/tests/test_secure_tunnel_gate.py` (+30 lines, regression test)
+
+**Validation:**
+```bash
+python3 -m pytest studio/backend/tests/test_secure_tunnel_gate.py -v
+python3 -m pytest unsloth_cli/tests/test_studio_secure_flag.py unsloth_cli/tests/test_studio_cloudflare_flag.py -v
+```
+- Secure tunnel gate tests: 16 passed (including new regression test).
+- Secure flag CLI tests: 24 passed when run with cloudflare tests (the two suites share state for `state.tool_policy`).
+- Manual check: `python3 studio/backend/run.py --not-secure --api-only` starts the server without argument errors.
+
+**Commit:** `d9099dea5 fix: run.py accepts --not-secure from CLI re-exec`
+**Pushed to:** `jecruz/unsloth:feature/pin-llama-server-port`
+
 6. **Working-tree note:** `README.md` has an uncommitted local-install section that is not part of this cherry-pick work; it was preserved by stashing/popping during branch switches. Do not commit it without explicit user approval.
