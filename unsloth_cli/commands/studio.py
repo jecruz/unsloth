@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import secrets
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -18,7 +19,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 import typer
 
 studio_app = typer.Typer(help = "Unsloth Studio commands.")
@@ -117,8 +118,12 @@ def _is_port_free(port: int) -> bool:
 
     Uses SO_REUSEADDR so a socket in TIME_WAIT (the usual case after a
     server crashes) does not falsely mark a port as taken.
+
+    Note: TOCTOU is unavoidable here; another process can grab the port
+    between this probe and the actual bind. The downstream bind will
+    surface the real conflict; the probe only saves us from a noisy
+    "couldn't bind" when the port is already known-busy.
     """
-    import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
@@ -130,13 +135,16 @@ def _is_port_free(port: int) -> bool:
 
 def _find_random_free_port() -> int:
     """OS-assigned ephemeral free port on 127.0.0.1."""
-    import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])
 
 
-def _resolve_studio_api_port(explicit: "Optional[int]") -> int:
+def _resolve_studio_api_port(
+    explicit: Optional[int],
+    *,
+    warn: "Optional[Callable[[str], None]]" = None,
+) -> int:
     """Resolve the Studio API port (the Studio HTTP server, not llama-server).
 
     Priority:
@@ -146,7 +154,10 @@ def _resolve_studio_api_port(explicit: "Optional[int]") -> int:
        port gets a deterministic non-conflicting neighbour for the API.
     3. ``8888`` (legacy default) when no env var is set.
     4. If the preferred port is busy, fall back to an OS-assigned ephemeral
-       port and log the substitution. Never raises on a busy port.
+       port. Never raises on a busy port.
+
+    *warn*, when set, receives the human-readable message that would
+    otherwise go to stderr; tests pass a recorder to assert on it.
     """
     if explicit is not None:
         return int(explicit)
@@ -162,12 +173,15 @@ def _resolve_studio_api_port(explicit: "Optional[int]") -> int:
     if _is_port_free(preferred):
         return preferred
     fallback = _find_random_free_port()
-    typer.echo(
+    message = (
         f"Port {preferred} is in use; using ephemeral port {fallback} "
         f"for the Studio API. Set --port or "
-        f"UNSLOTH_LLAMA_SERVER_PORT to a free pair to pin it.",
-        err = True,
+        f"UNSLOTH_LLAMA_SERVER_PORT to a free pair to pin it."
     )
+    if warn is not None:
+        warn(message)
+    else:
+        typer.echo(message, err = True)
     return fallback
 
 
