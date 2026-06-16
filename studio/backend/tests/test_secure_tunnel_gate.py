@@ -93,3 +93,33 @@ def test_failclosed_message_present_in_source():
         "A secure Cloudflare link is not allowed, use --not-secure which provides a 0.0.0.0 link"
         in src
     )
+
+
+def test_run_py_accepts_not_secure_flag():
+    # The CLI re-exec passes --not-secure (Typer's negative flag), but
+    # argparse.BooleanOptionalAction generates --no-secure. run.py must accept
+    # --not-secure explicitly so the launcher does not die with "unrecognized arguments".
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(_BACKEND / "run.py"),
+                "--not-secure",
+                "--api-only",
+            ],
+            capture_output = True,
+            text = True,
+            timeout = 1,
+        )
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        # Server started successfully and ran until timeout; that is fine.
+        stdout = (exc.stdout or "").decode(errors = "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = (exc.stderr or "").decode(errors = "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+
+    combined = stdout + stderr
+    assert "unrecognized arguments" not in combined.lower(), combined
+    assert "A secure Cloudflare link is not allowed" not in combined, combined

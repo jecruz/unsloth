@@ -1183,6 +1183,15 @@ if __name__ == "__main__":
         "if the tunnel can't start. Without it, --not-secure also serves the raw "
         "0.0.0.0 port, which is reachable from anywhere on the network",
     )
+    # Typer uses --secure/--not-secure, but BooleanOptionalAction generates --no-secure.
+    # Accept --not-secure explicitly so the re-exec from unsloth_cli works.
+    parser.add_argument(
+        "--not-secure",
+        dest = "secure",
+        action = "store_false",
+        default = False,
+        help = argparse.SUPPRESS,
+    )
     # Mirror unsloth_cli/commands/studio.py's _PARALLEL_*. Default 1 is for direct
     # backend launches; `unsloth studio run` always passes its own value (4).
     _PARALLEL_MIN = 1
