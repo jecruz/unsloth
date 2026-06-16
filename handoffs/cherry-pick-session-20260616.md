@@ -35,14 +35,62 @@ python3 -m pytest tests/python/test_gpu_init_ldconfig_guard.py tests/test_import
 
 ---
 
+## Candidates 2–4: Studio threads, CLI local-dataset, GGUF variant selection
+
+**Combined branch:** `cherry-pick/unsloth-5894-6357-6342-studio-cli-gguf`
+**Integration base:** `feature/pin-llama-server-port`
+
+### Commit 2: Studio threads fix (PR #5894)
+
+**Upstream commit:** `5a38447b2`
+**Subject:** `Studio: omit --threads when unset so llama.cpp picks physical cores (#5894)`
+**Risk level:** Low
+**Files changed:** `studio/backend/core/inference/llama_cpp.py`
+**Cherry-pick result:** Required conflict resolution. The feature branch's port-pinning work had changed the same `--threads` block and added redundant `import os, sys` in the library-path section. Resolved by keeping the upstream behavior (omit `--threads` when unset) and removing the redundant imports.
+
+### Commit 3: CLI local-dataset fix (PR #6357)
+
+**Upstream commit:** `0ac1fb5d9`
+**Subject:** `CLI: fix --local-dataset being parsed as a string instead of a list (#6357)`
+**Risk level:** Low
+**Files changed:**
+- `studio/backend/core/training/trainer.py`
+- `unsloth_cli/commands/studio.py`
+**Cherry-pick result:** Clean apply.
+
+### Commit 4: GGUF variant file selection fix (PR #6342)
+
+**Upstream commit:** `048f34e8f`
+**Subject:** `Fix GGUF variant file selection (#6342)`
+**Risk level:** Medium
+**Files changed:** 12 files across `studio/backend/core/inference/`, `studio/backend/hub/`, `studio/backend/routes/`, `studio/backend/utils/`, and `studio/frontend/src/features/chat/api/chat-adapter.ts`.
+**Cherry-pick result:** Clean apply.
+
+**Validation commands run:**
+```bash
+python3 -m py_compile studio/backend/core/inference/llama_cpp.py studio/backend/core/training/trainer.py unsloth_cli/commands/studio.py
+python3 -m pytest tests/studio/test_cli_studio_defaults.py tests/studio/test_export_output_path_contract.py -x -q
+python3 -m pytest tests/studio/test_llama_cpp_wall_clock_cap.py tests/studio/test_cli_run_alias.py -x -q
+```
+
+**Validation results:**
+- Syntax check: passed.
+- `test_cli_studio_defaults.py` + `test_export_output_path_contract.py`: 8 passed.
+- `test_llama_cpp_wall_clock_cap.py` + `test_cli_run_alias.py`: 5 passed.
+
+**Decision:** Keep all three. The low-risk fixes apply cleanly (or with minimal conflict resolution), and the medium-risk GGUF fix passes targeted tests.
+
+**Combined branch pushed to fork:** `jecruz/unsloth:cherry-pick/unsloth-5894-6357-6342-studio-cli-gguf`
+
+---
+
 ## Follow-ups / blockers
 
-1. **Environment:** Install `unsloth_zoo` and re-run the full test slice for `unsloth/_gpu_init.py` and `unsloth/import_fixes.py` to confirm no regressions.
+1. **Environment:** Install `unsloth_zoo` and re-run the full test slice for `unsloth/_gpu_init.py` and `unsloth/import_fixes.py` to confirm no regressions from the CVE fix.
 2. **Fork main alignment:** `fork/main` and `origin/main` have unrelated histories. Merging upstream into `fork/main` is not safe without further analysis. Consider either:
    - Keeping `feature/pin-llama-server-port` as the active integration base, or
    - Manually reviewing the 3,442 commits unique to `fork/main` before any history rewrite.
 3. **Next candidates:**
-   - `5a38447b2` Studio: omit `--threads` when unset so llama.cpp picks physical cores.
-   - `0ac1fb5d9` CLI: fix `--local-dataset` being parsed as a string instead of a list.
-   - `048f34e8f` Fix GGUF variant file selection (medium risk, 12 files).
-   - `58c2ec1eb` Studio: Xet-primary model downloads with HTTP fallback (high risk, defer until later).
+   - `58c2ec1eb` Studio: Xet-primary model downloads with HTTP fallback (high risk, 1,300+ lines, defer until later).
+   - `d50a2e2d0` Studio: remove the Windows VBS launcher to clear the Kaspersky false positive (#6326).
+   - `f3991ac41` Chat search: search all messages, user messages first (#6350).
