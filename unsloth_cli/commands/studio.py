@@ -112,6 +112,65 @@ def _should_hide_windows_subprocesses() -> bool:
         return True
 
 
+def _is_port_free(port: int) -> bool:
+    """True if *port* is bindable on 127.0.0.1 right now.
+
+    Uses SO_REUSEADDR so a socket in TIME_WAIT (the usual case after a
+    server crashes) does not falsely mark a port as taken.
+    """
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _find_random_free_port() -> int:
+    """OS-assigned ephemeral free port on 127.0.0.1."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _resolve_studio_api_port(explicit: "Optional[int]") -> int:
+    """Resolve the Studio API port (the Studio HTTP server, not llama-server).
+
+    Priority:
+
+    1. ``--port`` from the CLI (caller passes the explicit value).
+    2. ``UNSLOTH_LLAMA_SERVER_PORT + 1`` when set, so a pinned llama-server
+       port gets a deterministic non-conflicting neighbour for the API.
+    3. ``8888`` (legacy default) when no env var is set.
+    4. If the preferred port is busy, fall back to an OS-assigned ephemeral
+       port and log the substitution. Never raises on a busy port.
+    """
+    if explicit is not None:
+        return int(explicit)
+    llama_env = os.environ.get("UNSLOTH_LLAMA_SERVER_PORT", "").strip()
+    preferred: Optional[int] = None
+    if llama_env:
+        try:
+            preferred = int(llama_env) + 1
+        except ValueError:
+            preferred = None
+    if preferred is None:
+        preferred = 8888
+    if _is_port_free(preferred):
+        return preferred
+    fallback = _find_random_free_port()
+    typer.echo(
+        f"Port {preferred} is in use; using ephemeral port {fallback} "
+        f"for the Studio API. Set --port or "
+        f"UNSLOTH_LLAMA_SERVER_PORT to a free pair to pin it.",
+        err = True,
+    )
+    return fallback
+
+
 def _windows_hidden_subprocess_kwargs() -> dict[str, object]:
     """Return Windows-only Popen kwargs that suppress transient console windows."""
     if not _should_hide_windows_subprocesses():
@@ -635,7 +694,17 @@ def _format_context_length_line(load_result: dict) -> Optional[str]:
 @studio_app.callback(invoke_without_command = True)
 def studio_default(
     ctx: typer.Context,
-    port: int = typer.Option(8888, "--port", "-p"),
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        "-p",
+        help = (
+            "Studio API port. Default: UNSLOTH_LLAMA_SERVER_PORT + 1 when "
+            "set (so the inference port and the API port don't collide), "
+            "else 8888. If the preferred port is busy, falls back to an "
+            "OS-assigned ephemeral port."
+        ),
+    ),
     host: str = typer.Option("127.0.0.1", "--host", "-H"),
     frontend: Optional[Path] = typer.Option(None, "--frontend", "-f"),
     silent: bool = typer.Option(False, "--silent", "-q"),
@@ -681,6 +750,7 @@ def studio_default(
     _ensure_studio_env_exported()
     if llama_server_port is not None:
         os.environ["UNSLOTH_LLAMA_SERVER_PORT"] = str(llama_server_port)
+    port = _resolve_studio_api_port(port)
     if ctx.invoked_subcommand is not None:
         # Typer doesn't forward parent options to subcommands, so
         # `unsloth studio --parallel N run ...` would silently drop N.
@@ -947,7 +1017,16 @@ def run(
     api_key_name: str = typer.Option(
         "cli", "--api-key-name", help = "Label for the auto-generated API key"
     ),
-    port: int = typer.Option(8888, "--port", "-p"),
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        "-p",
+        help = (
+            "Studio API port. Default: UNSLOTH_LLAMA_SERVER_PORT + 1 when "
+            "set, else 8888. If the preferred port is busy, falls back to "
+            "an OS-assigned ephemeral port."
+        ),
+    ),
     host: str = typer.Option("127.0.0.1", "--host", "-H"),
     # `-f` removed (clustered `-fa`/`-fit*`); studio_default keeps it.
     frontend: Optional[Path] = typer.Option(None, "--frontend"),
@@ -1098,6 +1177,7 @@ def run(
 
     if llama_server_port is not None:
         os.environ["UNSLOTH_LLAMA_SERVER_PORT"] = str(llama_server_port)
+    port = _resolve_studio_api_port(port)
 
     if not in_studio_venv:
         studio_python = _studio_venv_python()
