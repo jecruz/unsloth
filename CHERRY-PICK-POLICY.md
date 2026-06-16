@@ -1,6 +1,8 @@
 # Cherry-Pick Policy
 
-This document defines the process for backporting changes from upstream dependencies (e.g., `llama.cpp`, `transformers`, `trl`, `peft`) into the Unsloth repository. It is adapted from the panthro.cpp backport policy and is intended to keep upstream syncs safe, reviewable, and measurable.
+This document defines the process for backporting changes from upstream dependencies (e.g., `llama.cpp`, `transformers`, `trl`, `peft`) into the local Unsloth fork. It is adapted from the panthro.cpp backport policy and is intended to keep upstream syncs safe, reviewable, and measurable.
+
+This policy is for **private fork maintenance only**. We pull changes from upstream into our own fork; we do not contribute these cherry-picks back to the upstream repository.
 
 ## When to use this policy
 
@@ -16,7 +18,7 @@ Do **not** use this policy for original Unsloth features, routine dependency ver
 
 ## Goal and scope
 
-**Goal:** Bring upstream changes into Unsloth only when the benefit clearly outweighs the risk, and only after the change has been validated against Unsloth's entry points and tests.
+**Goal:** Bring upstream changes into our private Unsloth fork only when the benefit clearly outweighs the risk, and only after the change has been validated against our fork's entry points and tests.
 
 **Scope:** Any cherry-pick that touches one of the following surfaces must follow the full policy:
 
@@ -136,9 +138,9 @@ After validation, pass the following gates before merging or continuing to the n
 
 After validation, make one of three decisions:
 
-- **Keep:** The cherry-pick is safe, tested, and the value is clear. Continue with the normal PR process.
+- **Keep:** The cherry-pick is safe, tested, and the value is clear. Integrate it into the fork's main branch or the target long-running branch.
 - **Defer:** The change is too invasive, not yet stable upstream, or the validation results are inconclusive. Record the reason and close or pause the branch.
-- **Reject:** The change conflicts with Unsloth architecture or is superseded by an existing Unsloth implementation. Record the reason.
+- **Reject:** The change conflicts with our fork's architecture or is superseded by an existing local implementation. Record the reason.
 
 Do not partially land a high-risk cherry-pick just to keep the branch alive.
 
@@ -170,7 +172,7 @@ A handoff must include:
 2. Cherry-pick it onto `cherry-pick/transformers-31987-chatml-fix`.
 3. Run the Ollama/chat template tests.
 4. If the fix improves a template already in `unsloth/chat_templates.py`, merge the changes manually and keep the Unsloth overrides intact.
-5. Record the result in the PR description.
+5. Record the result in the handoff note.
 
 ### Medium-risk: new llama.cpp speculative decoding option
 
@@ -179,7 +181,7 @@ A handoff must include:
 3. Wire the new option through the Studio backend without bypassing existing port-pinning and server scheduling.
 4. Add a regression test in `tests/studio/` or `tests/test_llama.py`.
 5. Run the Studio backend tests and a short smoke test against a local model.
-6. If results are positive, keep; if not, defer with a benchmark note.
+6. If results are positive, merge into the target fork branch; if not, defer with a benchmark note.
 
 ### High-risk: cross-cutting upstream API refactor
 
