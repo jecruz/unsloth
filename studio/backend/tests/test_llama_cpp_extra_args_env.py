@@ -69,3 +69,26 @@ class TestExtraArgsEnvInjection:
         original = ["-c", "1024"]
         LlamaCppBackend._apply_extra_args_env_injection(original)
         assert original == ["-c", "1024"]
+
+    def test_mtp_draft_n_max_workaround_passes_through(self, monkeypatch):
+        # Workaround for llama.cpp common/common.cpp:1500-1502: setting
+        # n_rs_seq = draft.n_max for MTP causes a 3x RS-buffer inflation
+        # that pushes --fit on M3 Max past its budget and drops context
+        # to 512. n_max=0 zeros n_rs_seq so MTP still runs at full ctx.
+        # --spec-draft-n-max is in _SPEC_FLAGS (strip-on-inherit) but NOT
+        # in the validator denylist, so the env value must reach the
+        # llama-server command line.
+        monkeypatch.setenv(
+            "UNSLOTH_LLAMA_SERVER_EXTRA_ARGS", "--spec-draft-n-max 0"
+        )
+        result = LlamaCppBackend._apply_extra_args_env_injection(
+            ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"]
+        )
+        assert result == [
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-n-max",
+            "2",
+            "--spec-draft-n-max",
+            "0",
+        ]
