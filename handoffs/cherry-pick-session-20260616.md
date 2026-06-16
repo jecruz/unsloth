@@ -118,7 +118,7 @@ python3 -m pytest tests/studio/test_cli_repo_variant.py studio/backend/tests/tes
 
 ## Follow-ups / blockers
 
-1. **Environment:** Install `unsloth_zoo` and re-run the full test slice for `unsloth/_gpu_init.py` and `unsloth/import_fixes.py` to confirm no regressions from the CVE fix.
+1. **Environment:** `unsloth_zoo` was installed in an isolated temp venv and the CVE-specific test that previously failed (`test_accelerate_patch_wired_into_gpu_init`) now passes. The broader `tests/test_import_fixes_drift.py` suite still fails on Python 3.14 with `torch 2.12.0` due to a `TypeError` in `torch/_inductor/runtime/triton_heuristics.py` (`unsupported operand type(s) for |: '_Noop' and 'type'`). This is a Python 3.14 / torch compatibility issue, not a regression from the CVE fix. Use Python 3.11–3.12 or a newer torch build to run the full drift suite.
 2. **Fork main alignment:** `fork/main` and `origin/main` have unrelated histories. Merging upstream into `fork/main` is not safe without further analysis. Consider either:
    - Keeping `feature/pin-llama-server-port` as the active integration base, or
    - Manually reviewing the 3,442 commits unique to `fork/main` before any history rewrite.
