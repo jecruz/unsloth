@@ -3953,11 +3953,21 @@ class LlamaCppBackend:
                     )
                 )
 
-                # -1 = llama.cpp auto-detect (physical cores). Pass explicitly
-                # so we don't inherit llama-server's internal default, which
-                # has varied (hardware concurrency incl. hyperthreads on some
-                # builds).
-                cmd.extend(["--threads", str(n_threads if n_threads is not None else -1)])
+                # Thread count: an unset --threads makes llama.cpp pick physical
+                # cores (common_cpu_get_num_math), but an explicit --threads -1
+                # resolves to hardware_concurrency() (every hyperthread), which
+                # contends on the memory bus and slows CPU / hybrid decode. So
+                # omit the flag when unset and only pin it for an explicit
+                # override or the Windows full-offload OpenMP cap. Pass-through
+                # thread flags in extra_args still win (appended last). #5692
+                if (
+                    sys.platform == "win32"
+                    and full_offload_tuning_active
+                    and not threads_overridden
+                ):
+                    cmd.extend(["--threads", "2"])
+                elif n_threads is not None and n_threads > 0:
+                    cmd.extend(["--threads", str(n_threads)])
 
                 # Enable Jinja chat template rendering
                 cmd.extend(["--jinja"])
@@ -4114,8 +4124,12 @@ class LlamaCppBackend:
                 logger.info(f"Starting llama-server: {' '.join(_log_cmd)}")
 
                 # Library paths so llama-server finds its shared libs and CUDA DLLs.
-                import os
-                import sys
+                env = self._llama_server_env_for_binary(binary)
+                # Omitting --threads relies on llama.cpp's physical-core default, so
+                # drop an inherited LLAMA_ARG_THREADS that would otherwise feed the
+                # arg handler and silently force hardware_concurrency(). #5692
+                if "--threads" not in cmd:
+                    env.pop("LLAMA_ARG_THREADS", None)
 
                 env = child_env_without_native_path_secret()
                 binary_dir = str(Path(binary).parent)
