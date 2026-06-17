@@ -21,6 +21,7 @@ import {
   loadChatSettingsWithLegacyImport,
   savePersistedChatSettingsPatch,
 } from "../utils/chat-settings-storage";
+import type { CompactMode } from "../api/auto-compact";
 
 const HF_TOKEN_KEY = "unsloth_hf_token";
 const HF_TOKEN_CHANGED_EVENT = "unsloth:hf-token-changed";
@@ -45,6 +46,8 @@ export const CHAT_RAG_AUTOINJECT_KEY = "unsloth_chat_rag_autoinject";
 export const CHAT_RAG_AUTOINJECT_MIN_SCORE_KEY =
   "unsloth_chat_rag_autoinject_min_score";
 export const CHAT_SPECULATIVE_TYPE_KEY = "unsloth_chat_speculative_type";
+export const CHAT_AUTO_COMPACT_KEY = "unsloth_chat_auto_compact";
+export const CHAT_COMPACT_MODE_KEY = "unsloth_chat_compact_mode";
 
 // Persist only the model-agnostic intents (auto/ngram/off). MTP modes
 // (mtp/mtp+ngram) and spec_draft_n_max stay session-only: a persisted MTP
@@ -520,6 +523,15 @@ type ChatRuntimeStore = {
   toolStatus: string | null;
   generatingStatus: string | null;
   autoHealToolCalls: boolean;
+  /**
+   * Client-side auto-compaction toggle. When on (default), the chat adapter
+   * compacts the outbound message history before a send that would otherwise
+   * overflow the effective context window (llama-server runs with
+   * `--no-context-shift`, so an overflow is a hard error without this).
+   */
+  autoCompact: boolean;
+  /** How auto-compaction drops history: "truncate" (default) or "summarize". */
+  compactMode: CompactMode;
   maxToolCallsPerMessage: number;
   toolCallTimeout: number;
   kvCacheDtype: string | null;
@@ -633,6 +645,8 @@ type ChatRuntimeStore = {
   setGeneratingStatus: (status: string | null) => void;
   setActiveDiffusionCanvas: (canvas: DiffusionCanvasFrame | null) => void;
   setAutoHealToolCalls: (enabled: boolean) => void;
+  setAutoCompact: (enabled: boolean) => void;
+  setCompactMode: (mode: CompactMode) => void;
   setMaxToolCallsPerMessage: (value: number) => void;
   setToolCallTimeout: (value: number) => void;
   setKvCacheDtype: (dtype: string | null) => void;
@@ -913,6 +927,11 @@ export const useChatRuntimeStore = create<ChatRuntimeStore>((set, get) => ({
   generatingStatus: null,
   activeDiffusionCanvas: null,
   autoHealToolCalls: true,
+  autoCompact: loadBool(CHAT_AUTO_COMPACT_KEY, true),
+  compactMode:
+    loadString(CHAT_COMPACT_MODE_KEY, "truncate") === "summarize"
+      ? "summarize"
+      : "truncate",
   maxToolCallsPerMessage: 25,
   toolCallTimeout: 5,
   kvCacheDtype: null,
@@ -1316,6 +1335,16 @@ export const useChatRuntimeStore = create<ChatRuntimeStore>((set, get) => ({
         state.autoHealToolCalls,
       );
       return { autoHealToolCalls };
+    }),
+  setAutoCompact: (autoCompact) =>
+    set(() => {
+      saveBool(CHAT_AUTO_COMPACT_KEY, autoCompact);
+      return { autoCompact };
+    }),
+  setCompactMode: (compactMode) =>
+    set(() => {
+      saveString(CHAT_COMPACT_MODE_KEY, compactMode);
+      return { compactMode };
     }),
   setMaxToolCallsPerMessage: (maxToolCallsPerMessage) =>
     set((state) => {

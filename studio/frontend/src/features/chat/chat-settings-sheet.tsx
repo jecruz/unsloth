@@ -1536,6 +1536,7 @@ export function ChatSettingsPanel({
           <CollapsibleSection label="Tools">
             <div className="flex flex-col gap-5 pt-1">
               <AutoHealToolCallsToggle />
+              <AutoCompactToggle />
               <ConfirmToolCallsToggle />
               <BypassPermissionsToggle />
               <MaxToolCallsSlider />
@@ -1716,6 +1717,31 @@ function AutoHealToolCallsToggle() {
         className="panel-switch"
         checked={autoHealToolCalls}
         onCheckedChange={setAutoHealToolCalls}
+      />
+    </div>
+  );
+}
+
+function AutoCompactToggle() {
+  const autoCompact = useChatRuntimeStore((s) => s.autoCompact);
+  const setAutoCompact = useChatRuntimeStore((s) => s.setAutoCompact);
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 text-[13px] font-medium leading-[1.25] tracking-nav text-nav-fg">
+          Auto-Compact Context
+        </span>
+        <InfoHint>
+          When the conversation approaches the context limit, Unsloth drops the
+          oldest turns (keeping the system prompt and recent messages) so
+          generation never fails with a context-overflow error.
+        </InfoHint>
+      </div>
+      <Switch
+        className="panel-switch"
+        checked={autoCompact}
+        onCheckedChange={setAutoCompact}
       />
     </div>
   );

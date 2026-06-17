@@ -53,6 +53,11 @@ import type {
 } from "../types/api";
 import type { ChatModelSummary } from "../types/runtime";
 import {
+  compactMessages,
+  decideAutoCompact,
+  estimateMessagesTokens,
+} from "./auto-compact";
+import {
   getStoredChatThread,
   getStoredChatProject,
   listStoredChatThreads,
@@ -384,6 +389,29 @@ function estimateTokenCount(text: string): number | undefined {
   }
   return Math.max(1, Math.round(trimmed.length / 4));
 }
+
+// Client-side auto-compaction logic lives in a dependency-free module so it
+// can be unit-tested with `node --experimental-strip-types`. Re-exported so
+// existing callers keep importing from chat-adapter; the send preflight uses
+// the top-level import of the same symbols.
+export {
+  AUTO_COMPACT_TRIGGER_RATIO,
+  AUTO_COMPACT_TARGET_RATIO,
+  AUTO_COMPACT_PIN_RECENT,
+  AUTO_COMPACT_MIN_CONTEXT,
+  AUTO_COMPACT_SUMMARY_MAX_TOKENS,
+  AUTO_COMPACT_MAX_RETRIES,
+  AUTO_COMPACT_SYNTHETIC_SYSTEM_MARKER_PREFIX,
+  estimateMessageTokens,
+  estimateMessagesTokens,
+  decideAutoCompact,
+  compactMessages,
+} from "./auto-compact";
+export type {
+  CompactMode,
+  AutoCompactDecision,
+  CompactableMessage,
+} from "./auto-compact";
 
 /**
  * Normalize a streamed `delta.content` to a plain text string.
@@ -1747,6 +1775,39 @@ export function createOpenAIStreamAdapter(): ChatModelAdapter {
           content: combinedSystemPrompt,
         });
       }
+
+      // Client-side auto-compaction preflight. Only the local llama-server
+      // path is affected: it runs with `--no-context-shift`, so a prompt that
+      // overflows `effectiveNctx` is a hard error. External providers manage
+      // their own context window, so we skip them. When the projected prompt
+      // size crosses AUTO_COMPACT_TRIGGER_RATIO, drop/summarize the oldest
+      // non-pinned turns down to AUTO_COMPACT_TARGET_RATIO and toast the user.
+      if (!isExternalRequest) {
+        const compactStore = useChatRuntimeStore.getState();
+        const effectiveNctx =
+          compactStore.customContextLength ?? compactStore.ggufContextLength;
+        const decision = decideAutoCompact({
+          estimatedTokens: estimateMessagesTokens(outboundMessages),
+          lastPromptTokens: compactStore.contextUsage?.promptTokens,
+          effectiveNctx,
+          autoCompact: compactStore.autoCompact,
+        });
+        if (decision.trigger && effectiveNctx) {
+          const { messages: compacted, droppedCount } = compactMessages({
+            messages: outboundMessages,
+            effectiveNctx,
+          });
+          if (droppedCount > 0) {
+            outboundMessages.splice(0, outboundMessages.length, ...compacted);
+            toast.info("Conversation auto-compacted", {
+              description: `Dropped ${droppedCount} older message${
+                droppedCount === 1 ? "" : "s"
+              } to stay within the context window.`,
+            });
+          }
+        }
+      }
+
       let disabledToolGuard: string | null = null;
       const disabledToolGuardProviderType = externalProvider?.providerType;
       if (
