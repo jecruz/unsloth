@@ -2360,15 +2360,43 @@ class LlamaCppBackend:
         """Find an available TCP port.
 
         Checks ``UNSLOTH_LLAMA_SERVER_PORT`` first; if set to a valid
-        port number, uses it directly. Otherwise binds to port 0 to let
-        the OS assign a free port.
+        port number AND the port is free on 127.0.0.1, uses it directly.
+        If the env-pinned port is busy (e.g. a long-lived RAG embedder
+        is still bound to it from an earlier embedding request, or the
+        previous llama-server has not finished releasing the socket),
+        logs a warning and falls back to an OS-assigned ephemeral port.
+        Pinning a busy port would silently race the spawned process:
+        the new llama-server would fail to bind, the /health probe
+        would hit the *other* server still answering on the port, and
+        the load would falsely report success while the requested
+        model is never loaded.
+
+        Without the env var, binds to port 0 so the OS assigns a free
+        port (the upstream behaviour).
         """
         env_port = os.environ.get("UNSLOTH_LLAMA_SERVER_PORT", "").strip()
         if env_port:
             try:
                 port = int(env_port)
                 if 1 <= port <= 65535:
-                    return port
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        try:
+                            s.bind(("127.0.0.1", port))
+                        except OSError:
+                            logger.warning(
+                                f"UNSLOTH_LLAMA_SERVER_PORT={port} is busy on "
+                                "127.0.0.1; another server (likely the "
+                                "RAG embedder or a previous llama-server "
+                                "still releasing the socket) is bound to "
+                                "it. Falling back to an OS-assigned "
+                                "ephemeral port for this load. Stop the "
+                                "other server, or unset "
+                                "UNSLOTH_LLAMA_SERVER_PORT to let Studio "
+                                "pick a free port automatically."
+                            )
+                            # Fall through to the OS-assigned branch.
+                        else:
+                            return port
             except ValueError:
                 pass
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -5497,6 +5525,19 @@ class LlamaCppBackend:
             try:
                 resp = httpx.get(url, timeout = 2.0)
                 if resp.status_code == 200:
+                    # Defense in depth: a /health 200 from a *different*
+                    # server still bound to the port (e.g. a stale RAG
+                    # embedder) would falsely confirm the spawned process
+                    # is up. Re-check the subprocess: between the poll()
+                    # above and this http round-trip, a bind-failed child
+                    # can exit while a peer server answers 200 on the
+                    # same port. If the spawned process died, fall
+                    # through to the next loop iteration so the existing
+                    # crash branch logs the real exit cause and the
+                    # load surfaces as a failure instead of a silent
+                    # swap to the wrong model.
+                    if self._process.poll() is not None:
+                        continue
                     return True
             except (
                 httpx.ConnectError,

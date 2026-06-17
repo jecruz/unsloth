@@ -199,7 +199,89 @@ class TestCrashLogTail:
         assert crash_logs and "llama-123-port-1234.log" in crash_logs[-1]
 
 
-class TestRetryLogFilenameUnique:
+class TestPostHealth200RaceDetection:
+    """Defense in depth: a /health 200 from a *different* server bound
+    to the same port must not falsely confirm the spawned process.
+
+    The race: ``self._process.poll() is not None`` runs first, then
+    ``httpx.get`` issues the request. While the request is in flight
+    the spawned child can die (bind error, OOM, signal). If a peer
+    server (e.g. a stale RAG embedder that was started earlier and
+    is still listening on ``UNSLOTH_LLAMA_SERVER_PORT``) answers 200,
+    the naive loop returns True and the load is reported as a success
+    while the requested model is never actually loaded.
+
+    The fix re-checks ``poll()`` after a 200; if the child died, the
+    loop continues and the existing crash branch logs the real exit
+    cause. ``_find_free_port`` catches the common case (busy env port
+    -> fall back); this test guards the residual race in case any
+    future code path reaches the health probe without going through
+    ``_find_free_port`` first.
+    """
+
+    def test_health_200_then_process_dies_returns_false(self, monkeypatch):
+        """If /health returns 200 but poll() now reports the child dead,
+        the loop must NOT declare success. We simulate the race: first
+        poll() (in the iter-1 guard) returns None (still alive at the
+        guard), httpx.get returns 200 (peer server answered), the
+        post-200 re-check returns 1 (spawned child bind-failed in
+        flight), then iter-2 guard catches the dead subprocess and
+        returns False with a crash log."""
+        b = _make_backend()
+        b._process.poll.side_effect = [None, 1, 1]
+        b._process.returncode = 1
+        b._stdout_lines = [
+            "srv  start: binding port with default address family",
+            "srv  start: couldn't bind HTTP server socket, port: 12606",
+        ]
+        b._llama_log_path = Path("/tmp/llama-racelog.log")
+        ok_resp = mock.Mock(status_code = 200)
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: ok_resp)
+
+        assert b._wait_for_health(timeout = 5.0, interval = 0.01) is False
+        # The guard, the probe, AND the re-check all ran before the
+        # iter-2 guard fired the crash branch.
+        assert b._process.poll.call_count >= 3
+
+    def test_health_200_with_process_still_alive_returns_true(self, monkeypatch):
+        """The post-200 re-check must NOT false-positive: when the
+        spawned process is genuinely still alive after the probe,
+        _wait_for_health returns True on the first 200 as before."""
+        b = _make_backend()
+        b._process.poll.return_value = None
+        ok_resp = mock.Mock(status_code = 200)
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: ok_resp)
+
+        assert b._wait_for_health(timeout = 1.0, interval = 0.01) is True
+        # One guard + one probe + one re-check, then return True.
+        assert b._process.poll.call_count == 2
+
+    def test_race_log_mentions_swap_and_log_path(self, monkeypatch):
+        """The post-200 crash log must call out the 'different server
+        answered' root cause AND include the per-attempt log file path
+        so the user can find the real bind error."""
+        records = TestCrashLogTail._capture_error_logs(monkeypatch)
+        b = _make_backend()
+        b._process.poll.side_effect = [None, 7, 7]
+        b._process.returncode = 7
+        b._stdout_lines = ["srv  start: couldn't bind HTTP server socket"]
+        b._llama_log_path = Path("/tmp/llama-busyport.log")
+        monkeypatch.setattr(
+            httpx, "get", lambda *a, **kw: mock.Mock(status_code = 200)
+        )
+
+        assert b._wait_for_health(timeout = 1.0, interval = 0.01) is False
+
+        crash_logs = [m for m in records if "exited with code" in m]
+        assert crash_logs, "post-200 race must produce a crash log"
+        last = crash_logs[-1]
+        # Real exit code made it into the log.
+        assert "exited with code 7" in last
+        # Log file path is appended for post-mortem.
+        assert "llama-busyport.log" in last
+
+
+
     """The --fit off retry can respawn within the same epoch second; the log
     filename must carry the attempt index or the second open ("w") truncates
     the crash log the retry warning just referenced (found by simulation:
