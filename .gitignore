@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *.class
 unsloth_compiled_cache/
+
+# macOS Finder metadata
+.DS_Store
 # Notebook-validator runtime PyPI metadata cache (CI repopulates).
 scripts/data/pypi_cache/
 # ML artifacts (large files)
