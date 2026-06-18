@@ -41,6 +41,7 @@ from utils.llama_cpp_freshness import (
     read_install_marker,
     reset_caches,
 )
+from utils.process_lifetime import child_popen_kwargs
 
 logger = structlog.get_logger(__name__)
 
@@ -429,6 +430,7 @@ def _run_update(install_dir: Path, repo: str, asset: Optional[str], script: Path
             stderr = subprocess.STDOUT,
             text = True,
             env = env,
+            **child_popen_kwargs(),
         )
         timed_out = threading.Event()
 
