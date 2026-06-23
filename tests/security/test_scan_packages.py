@@ -576,19 +576,12 @@ def test_requires_dist_skips_extras():
             "payload>=1 ; extra != 'dev'",  # default-true marker -> kept
         ],
     )
-<<<<<<< HEAD
-    specs = sp._requires_dist_names(meta, None)
-    # Version constraints are preserved so a pinned dep is fetched, not latest.
-    assert "numpy>=1.20" in specs
-    assert "pyyaml>=5" in specs
-=======
     specs = sp._requires_dist_names(meta)
     # Version constraints are preserved so a pinned dep is fetched, not latest.
     assert "numpy>=1.20" in specs
     assert "pyyaml>=5" in specs
     # A default-true marker that merely mentions ``extra`` is NOT optional.
     assert "payload>=1" in specs
->>>>>>> 07c7f9bfc (Package scanners: close fail-open gaps in the sdist fallback and hidden-payload paths (#6359))
     # The extra-gated dep is skipped entirely (no torch under any form).
     assert not any(sp._extract_pkg_name(s) == "torch" for s in specs)
 

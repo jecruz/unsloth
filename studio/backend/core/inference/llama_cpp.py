@@ -5276,14 +5276,11 @@ class LlamaCppBackend:
         except Exception as e:
             logger.warning(f"Error killing llama-server process: {e}")
         finally:
-<<<<<<< HEAD
-=======
             # getattr: teardown must tolerate a partially-built backend (failed
             # __init__ or a __new__-built instance), as with _llama_log_fh below.
             if getattr(self, "_stats_logger", None) is not None:
                 self._stats_logger.stop()
                 self._stats_logger = None
->>>>>>> 1b697ed6f (Fix _kill_process AttributeError when _stats_logger is unset (#6417))
             self._process = None
             self._clear_server_pid()
             # Clear healthy so a /load during the replacement's warm-up can't

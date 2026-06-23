@@ -398,15 +398,9 @@ def test_baseline_suppresses_listed_but_not_new_pattern(tmp_path):
     )
     baseline = snp._load_baseline(str(bl))
 
-<<<<<<< HEAD
-    listed = _finding("aws-sdk@2.0.0", "aws-sdk/metadata.js", "cred-surface-host (outbound)")
-    # A NEW kind of finding in the SAME file is a different pattern -> not suppressed.
-    new_kind = _finding("aws-sdk@2.0.0", "aws-sdk/metadata.js", "obfuscated-blob")
-=======
     listed = _finding("aws-sdk@2.0.0", "package/metadata.js", "cred-surface-host (outbound)")
     # A NEW kind of finding in the SAME file is a different pattern -> not suppressed.
     new_kind = _finding("aws-sdk@2.0.0", "package/metadata.js", "obfuscated-blob")
->>>>>>> 07c7f9bfc (Package scanners: close fail-open gaps in the sdist fallback and hidden-payload paths (#6359))
     active, suppressed = snp._partition_baseline([listed, new_kind], baseline)
     assert listed in suppressed
     assert new_kind in active

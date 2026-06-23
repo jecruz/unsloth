@@ -886,16 +886,11 @@ def run_server(
     """
     global _server, _shutdown_event
 
-<<<<<<< HEAD
-    if llama_server_port is not None:
-        os.environ["UNSLOTH_LLAMA_SERVER_PORT"] = str(llama_server_port)
-=======
     # Reap every child if the parent dies abnormally (terminal close, Task
     # Manager kill, SIGKILL); must run before any child can spawn.
     from utils.process_lifetime import initialize_parent_lifetime
 
     initialize_parent_lifetime()
->>>>>>> 8e0d082c9 (Reap Studio child processes when the parent dies abnormally (#6425))
 
     # --secure exposes only the Cloudflare link: force a loopback bind so the raw
     # port is never public (even with -H 0.0.0.0), and reject the contradictory combo.
