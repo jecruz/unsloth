@@ -130,6 +130,10 @@ def clean_offline_env(monkeypatch):
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising = False)
 
 
+@pytest.mark.xfail(
+    reason = "Upstream PR #6342 (_is_big_endian_gguf_path filter) was deliberately reverted in fork via 3bb9cf8b7; these tests exercise behavior that is intentionally absent. See handoffs/cherry-pick-session-20260624-merge.md.",
+    strict = True,
+)
 class TestGgufVariantFileResolution:
     def test_prefers_exact_unknown_variant_over_big_endian_sibling(self):
         files = [
