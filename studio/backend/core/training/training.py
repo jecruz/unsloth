@@ -24,9 +24,10 @@ from datetime import datetime, timezone
 from loggers import get_logger
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, TYPE_CHECKING
 
-import matplotlib.pyplot as plt
+if TYPE_CHECKING:
+    import matplotlib.pyplot as plt
 from utils.hardware import prepare_gpu_selection
 from utils.native_path_leases import (
     native_path_secret_removed_for_child_start,
@@ -35,6 +36,30 @@ from utils.native_path_leases import (
 from utils.paths import outputs_root
 
 logger = get_logger(__name__)
+
+_pyplot = None
+_pyplot_failed = False
+
+
+def _load_pyplot():
+    """Lazily import matplotlib.pyplot (headless Agg); return it, or None if
+    matplotlib is unavailable. Deferred so a blocked native wheel (e.g. Windows
+    Smart App Control) never breaks server startup, only loss plotting.
+    """
+    global _pyplot, _pyplot_failed
+    if _pyplot is not None or _pyplot_failed:
+        return _pyplot
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")  # headless backend
+        import matplotlib.pyplot as plt
+
+        _pyplot = plt
+    except Exception as e:
+        _pyplot_failed = True
+        logger.warning("matplotlib unavailable; loss plots disabled", error = str(e))
+    return _pyplot
 
 
 def _coerce_seed(value, default = 3407) -> int:
@@ -77,8 +102,12 @@ _HF_TMP_CHECKPOINT_RE = re.compile(r"^tmp-checkpoint-\d+$")
 
 
 def _sanitize_db_config(config: dict[str, Any]) -> dict[str, Any]:
+    # ``subject`` (the run owner's username / API-key id) is worker-only metadata; never
+    # persist it to config_json, which run-history GET returns to any authenticated user.
     db_config = {
-        k: v for k, v in config.items() if k not in {"hf_token", "wandb_token", "s3_config"}
+        k: v
+        for k, v in config.items()
+        if k not in {"hf_token", "wandb_token", "s3_config", "subject"}
     }
     s3_config = config.get("s3_config")
     if hasattr(s3_config, "model_dump"):
@@ -229,11 +258,24 @@ class TrainingBackend:
     # Public API (called by routes/training.py)
     # ------------------------------------------------------------------
 
-    def start_training(self, job_id: str, **kwargs) -> bool:
+    def start_training(
+        self,
+        job_id: str,
+        *,
+        before_spawn = None,
+        **kwargs,
+    ) -> bool:
         """Spawn a subprocess to run the full training pipeline.
 
         All kwargs are serialized into a config dict and sent to the worker.
         Returns True if the subprocess started successfully.
+
+        ``before_spawn`` is an optional no-arg callable run after synchronous
+        validation (start guards, config build, explicit gpu_ids) passes but
+        before VRAM-dependent auto GPU-selection and the spawn -- used to free
+        VRAM (e.g. unload chat) without tearing it down on a refused start, while
+        still letting auto-selection place training against the freed memory.
+        Hook failures never block the start.
         """
         with self._lock:
             if self._proc is not None and self._proc.is_alive():
@@ -264,6 +306,7 @@ class TrainingBackend:
             "train_split": kwargs.get("train_split", "train"),
             "eval_split": kwargs.get("eval_split"),
             "eval_steps": kwargs.get("eval_steps", 0.00),
+            "dataset_streaming": kwargs.get("dataset_streaming", False),
             "dataset_slice_start": kwargs.get("dataset_slice_start"),
             "dataset_slice_end": kwargs.get("dataset_slice_end"),
             "custom_format_mapping": kwargs.get("custom_format_mapping"),
@@ -315,6 +358,8 @@ class TrainingBackend:
             "tensorboard_dir": kwargs.get("tensorboard_dir", "runs"),
             "resume_from_checkpoint": kwargs.get("resume_from_checkpoint"),
             "trust_remote_code": kwargs.get("trust_remote_code", False),
+            "approved_remote_code_fingerprint": kwargs.get("approved_remote_code_fingerprint"),
+            "subject": kwargs.get("subject"),
             "gpu_ids": kwargs.get("gpu_ids"),
             "s3_config": kwargs.get("s3_config"),
             # Flipped to True only by the HTTP-fallback respawn after a stall.
@@ -325,26 +370,50 @@ class TrainingBackend:
         if config["training_type"] == "Full Finetuning":
             config["load_in_4bit"] = False
 
-        # Spawn into locals so state is untouched on failure.
+        # Split GPU validation from placement around the VRAM hook:
+        #   * Explicit gpu_ids are validated here (raises -> the route returns 400
+        #     before any teardown) and their placement is VRAM-independent, so it
+        #     stays correct after the hook frees memory.
+        #   * Auto-selection ranks GPUs by *free* VRAM, so it is deferred until
+        #     after the hook frees export/chat -- otherwise it could pin training
+        #     onto a GPU the hook is about to clear (and onto a kept chat model).
         from utils.hardware import hardware as _hw
 
+        gpu_ids = kwargs.get("gpu_ids")
+        gpu_selection_kwargs = dict(
+            model_name = config["model_name"],
+            hf_token = config["hf_token"] or None,
+            training_type = config["training_type"],
+            load_in_4bit = config["load_in_4bit"],
+            batch_size = config.get("batch_size", 4),
+            max_seq_length = config.get("max_seq_length", 2048),
+            lora_rank = config.get("lora_r", 16),
+            target_modules = config.get("target_modules"),
+            gradient_checkpointing = config.get("gradient_checkpointing", "unsloth"),
+            optimizer = config.get("optim", "adamw_8bit"),
+        )
+
+        defer_auto_selection = False
         if _hw.DEVICE == _hw.DeviceType.MLX:
             config["resolved_gpu_ids"] = None
             config["gpu_selection"] = None
+        elif gpu_ids:
+            resolved_gpu_ids, gpu_selection = prepare_gpu_selection(gpu_ids, **gpu_selection_kwargs)
+            config["resolved_gpu_ids"] = resolved_gpu_ids
+            config["gpu_selection"] = gpu_selection
         else:
-            resolved_gpu_ids, gpu_selection = prepare_gpu_selection(
-                kwargs.get("gpu_ids"),
-                model_name = config["model_name"],
-                hf_token = config["hf_token"] or None,
-                training_type = config["training_type"],
-                load_in_4bit = config["load_in_4bit"],
-                batch_size = config.get("batch_size", 4),
-                max_seq_length = config.get("max_seq_length", 2048),
-                lora_rank = config.get("lora_r", 16),
-                target_modules = config.get("target_modules"),
-                gradient_checkpointing = config.get("gradient_checkpointing", "unsloth"),
-                optimizer = config.get("optim", "adamw_8bit"),
-            )
+            defer_auto_selection = True
+
+        # Synchronous validation passed -> free VRAM (export + chat) now, before
+        # auto-selection and the spawn, so placement sees the freed memory.
+        if before_spawn is not None:
+            try:
+                before_spawn()
+            except Exception:
+                logger.warning("before_spawn hook failed; continuing", exc_info = True)
+
+        if defer_auto_selection:
+            resolved_gpu_ids, gpu_selection = prepare_gpu_selection(None, **gpu_selection_kwargs)
             config["resolved_gpu_ids"] = resolved_gpu_ids
             config["gpu_selection"] = gpu_selection
 
@@ -366,6 +435,9 @@ class TrainingBackend:
                     daemon = True,
                 )
                 proc.start()
+                from utils.process_lifetime import adopt_pid
+
+                adopt_pid(proc.pid)  # bind to parent lifetime (Windows job / sweep)
         except Exception:
             logger.error("Failed to start training subprocess", exc_info = True)
             return False
@@ -528,6 +600,9 @@ class TrainingBackend:
                     daemon = True,
                 )
                 new_proc.start()
+                from utils.process_lifetime import adopt_pid
+
+                adopt_pid(new_proc.pid)  # bind to parent lifetime (Windows job / sweep)
         except Exception:
             logger.error("Failed to respawn training subprocess", exc_info = True)
             with self._lock:
@@ -605,7 +680,7 @@ class TrainingBackend:
         plot = self._create_loss_plot(progress, theme)
         return (plot, progress)
 
-    def refresh_plot_for_theme(self, theme: str) -> Optional[plt.Figure]:
+    def refresh_plot_for_theme(self, theme: str) -> "Optional[plt.Figure]":
         """Refresh plot with new theme."""
         if theme and isinstance(theme, str) and theme in ["light", "dark"]:
             self.current_theme = theme
@@ -1040,8 +1115,14 @@ class TrainingBackend:
         self,
         progress: TrainingProgress,
         theme: str = "light",
-    ) -> plt.Figure:
-        """Create training loss plot with theme-aware styling."""
+    ) -> "Optional[plt.Figure]":
+        """Create training loss plot with theme-aware styling.
+
+        matplotlib is loaded lazily; returns None if it is unavailable.
+        """
+        plt = _load_pyplot()
+        if plt is None:
+            return None
         plt.close("all")
 
         LIGHT_STYLE = {
